@@ -2,7 +2,7 @@
     "id":  "animeunity-it-local",
     "name":  "AnimeUnity (IT) - local",
     "description":  "Public AnimeUnity catalogue and HLS; no DRM, paywall, or login.",
-    "manifestURI":  "",
+    "manifestURI":  "https://raw.githubusercontent.com/Kijiiin/seanime-animeunity/refs/heads/main/animeunity-it.json",
     "version":  "1.0.0",
     "author":  "Local",
     "type":  "onlinestream-provider",
