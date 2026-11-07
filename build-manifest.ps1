@@ -13,5 +13,7 @@ $manifest = [ordered]@{
     lang = "it"
     payload = $providerCode
 }
-$manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath "$PSScriptRoot\animeunity-it.json" -Encoding utf8
+$json = $manifest | ConvertTo-Json -Depth 5
+# Seanime expects JSON without a UTF-8 BOM.
+[System.IO.File]::WriteAllText("$PSScriptRoot\animeunity-it.json", $json, [System.Text.UTF8Encoding]::new($false))
 Write-Host "Created animeunity-it.json"
