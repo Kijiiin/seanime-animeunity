@@ -12,7 +12,7 @@
   "readme": "",
   "notes": "Build sperimentale. Richiede Seanime 3.10.x e accesso di rete ad animeunity.co.it.",
   "lang": "it",
-  "payloadURI": "PERCORSO_ASSOLUTO/al/file/animeunity-calendar.ts",
+  "payloadURI": "https://raw.githubusercontent.com/Kijiiin/seanime-animeunity/refs/heads/main/animeunity-calendar.ts",
   "plugin": {
     "version": "1",
     "permissions": {
