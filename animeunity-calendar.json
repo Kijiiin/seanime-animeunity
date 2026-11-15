@@ -1,16 +1,16 @@
 {
   "id": "animeunity-calendar",
   "name": "AnimeUnity Calendar",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "manifestURI": "https://raw.githubusercontent.com/Kijiiin/seanime-animeunity/refs/heads/main/animeunity-calendar.json",
   "language": "typescript",
   "type": "plugin",
-  "description": "Calendario separato delle uscite AnimeUnity all'interno di Seanime.",
-  "author": "ChatGPT",
+  "description": "Mostra in Seanime un calendario separato con gli episodi programmati su AnimeUnity.",
+  "author": "USERNAME",
   "icon": "https://animeunity.co.it/favicon.ico",
-  "website": "",
-  "readme": "",
-  "notes": "Build sperimentale. Richiede Seanime 3.10.x e accesso di rete ad animeunity.co.it.",
+  "website": "https://animeunity.co.it/calendario/",
+  "readme": "https://github.com/USERNAME/AnimeUnity-Calendar",
+  "notes": "Build iniziale sperimentale. Richiede il permesso di rete per animeunity.co.it e storage.",
   "lang": "it",
   "payloadURI": "https://raw.githubusercontent.com/Kijiiin/seanime-animeunity/refs/heads/main/animeunity-calendar.ts",
   "plugin": {
@@ -23,12 +23,11 @@
         "networkAccess": {
           "allowedDomains": [
             "animeunity.co.it",
-            "*.animeunity.co.it"
+            "www.animeunity.co.it"
           ],
-          "reasoning": "Necessario per leggere il calendario pubblico delle uscite AnimeUnity."
+          "reasoning": "Serve esclusivamente per leggere la pagina pubblica del calendario AnimeUnity."
         }
       }
     }
-  },
-  "isDevelopment": true
+  }
 }
