@@ -1,0 +1,34 @@
+{
+  "id": "animeunity-calendar",
+  "name": "AnimeUnity Calendar",
+  "version": "0.1.0",
+  "manifestURI": "",
+  "language": "typescript",
+  "type": "plugin",
+  "description": "Calendario separato delle uscite AnimeUnity all'interno di Seanime.",
+  "author": "ChatGPT",
+  "icon": "https://animeunity.co.it/favicon.ico",
+  "website": "",
+  "readme": "",
+  "notes": "Build sperimentale. Richiede Seanime 3.10.x e accesso di rete ad animeunity.co.it.",
+  "lang": "it",
+  "payloadURI": "PERCORSO_ASSOLUTO/al/file/animeunity-calendar.ts",
+  "plugin": {
+    "version": "1",
+    "permissions": {
+      "scopes": [
+        "storage"
+      ],
+      "allow": {
+        "networkAccess": {
+          "allowedDomains": [
+            "animeunity.co.it",
+            "*.animeunity.co.it"
+          ],
+          "reasoning": "Necessario per leggere il calendario pubblico delle uscite AnimeUnity."
+        }
+      }
+    }
+  },
+  "isDevelopment": true
+}
