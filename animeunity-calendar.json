@@ -2,7 +2,7 @@
   "id": "animeunity-calendar",
   "name": "AnimeUnity Calendar",
   "version": "0.1.0",
-  "manifestURI": "",
+  "manifestURI": "https://raw.githubusercontent.com/Kijiiin/seanime-animeunity/refs/heads/main/animeunity-calendar.json",
   "language": "typescript",
   "type": "plugin",
   "description": "Calendario separato delle uscite AnimeUnity all'interno di Seanime.",
