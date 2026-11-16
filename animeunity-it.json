@@ -1,12 +1,12 @@
 {
-    "id":  "animeunity-it-local",
-    "name":  "AnimeUnity (IT) - local",
-    "description":  "Public AnimeUnity catalogue and HLS; no DRM, paywall, or login.",
-    "manifestURI":  "https://raw.githubusercontent.com/Kijiiin/seanime-animeunity/refs/heads/main/animeunity-it.json",
-    "version":  "1.0.5",
-    "author":  "Local",
-    "type":  "onlinestream-provider",
-    "language":  "typescript",
-    "lang":  "it",
-    "payloadURI": "https://raw.githubusercontent.com/Kijiiin/seanime-animeunity/refs/heads/main/animeunity-it.ts"
+  "id": "animeunity-it-local",
+  "name": "AnimeUnity (IT)",
+  "description": "AnimeUnity.cx provider for Seanime",
+  "manifestURI": "https://raw.githubusercontent.com/Kijiiin/seanime-animeunity/refs/heads/main/animeunity-it.json",
+  "version": "1.0.5",
+  "author": "Kijiiin",
+  "type": "onlinestream-provider",
+  "language": "typescript",
+  "lang": "it",
+  "payloadURI": "https://raw.githubusercontent.com/Kijiiin/seanime-animeunity/refs/heads/main/animeunity-it.ts"
 }
