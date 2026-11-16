@@ -2,22 +2,24 @@
 /// <reference path="./online-streaming-provider.d.ts" />
 
 /**
- * AnimeUnity.cx - Seanime Provider
+ * AnimeUnity.cx - Seanime Online Streaming Provider
  *
- * Nuova struttura API:
- * - GET /api/search?q=
- * - GET /anime/{id}-{slug}
- * - GET /api/anime/{id}/episodes?start=
- * - GET /anime/{id}-{slug}/{videoId}
+ * Versione revisionata.
  *
- * Player:
- * - VixCloud
- * - Estrazione dinamica di embedUrl
- * - Estrazione masterPlaylist HLS
+ * Gestione:
+ * - Ricerca anime tramite API pubblica
+ * - Pagine AnimeUnity con risposte Inertia JSON o HTML
+ * - Estrazione episodi e varianti linguistiche
+ * - Estrazione dinamica dell'embed VixCloud
+ * - Costruzione URL HLS con token temporanei
+ *
+ * Nota:
+ * La paginazione oltre gli episodi caricati inizialmente
+ * non viene richiesta tramite endpoint non verificati.
  */
 
 type AnimeVariant = {
-    language: string;
+    language?: string;
     status?: string;
     episodes_count?: number;
 };
@@ -25,9 +27,10 @@ type AnimeVariant = {
 type AnimeRecord = {
     id: number | string;
     slug: string;
-    title: string;
-    title_ja?: string | null;
+    title?: string;
     title_it?: string | null;
+    title_ja?: string | null;
+    title_eng?: string | null;
     year?: number;
     total_episodes?: number;
     images?: {
@@ -38,53 +41,39 @@ type AnimeRecord = {
     variants?: AnimeVariant[];
 };
 
-type SearchResponse = {
-    data: AnimeRecord[];
-    count: number;
-    hasMore: boolean;
-};
-
 type VideoRecord = {
     id: number | string;
-    language: string;
+    language?: string;
     runtime?: number;
-    scws_id: number | string;
+    scws_id?: number | string;
     is_hidden?: boolean;
 };
 
 type EpisodeRecord = {
     id: number | string;
-    number: string | number;
-    seq_number_start: number;
-    seq_number_end: number;
+    number?: string | number;
+    seq_number_start?: number;
+    seq_number_end?: number;
     is_filler?: boolean;
-    videos: VideoRecord[];
-};
-
-type EpisodesResponse = {
-    episodes: EpisodeRecord[];
+    videos?: VideoRecord[];
 };
 
 type LoadedEpisodes = {
-    episodes: EpisodeRecord[];
-    start: number;
-    tab_size: number;
-    total: number;
-    offset: number;
+    episodes?: EpisodeRecord[];
+    start?: number;
+    tab_size?: number;
+    total?: number;
+    offset?: number;
 };
 
 type AnimePageProps = {
-    props: {
+    props?: {
         anime?: AnimeRecord;
         episode?: EpisodeRecord;
         video?: VideoRecord;
         loadedEpisodes?: LoadedEpisodes;
         embedUrl?: string | null;
     };
-};
-
-type RequestHeaders = {
-    [key: string]: string;
 };
 
 type MasterPlaylist = {
@@ -96,13 +85,15 @@ type MasterPlaylist = {
     };
 };
 
+type RequestHeaders = {
+    [key: string]: string;
+};
+
 class Provider {
     private readonly base = "https://animeunity.cx";
 
     private readonly agent =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
-
-    private readonly episodePageSize = 120;
 
     getSettings(): Settings {
         return {
@@ -111,63 +102,126 @@ class Provider {
         };
     }
 
-    // --------------------------------------------------
+    // ==================================================
     // SEARCH
-    // --------------------------------------------------
+    // ==================================================
 
     async search(opts: SearchOptions): Promise<SearchResult[]> {
         const query = (opts.query || "").trim();
 
-        if (!query) return [];
+        if (!query) {
+            return [];
+        }
 
-        const response = await fetch(
-            `${this.base}/api/search?q=${encodeURIComponent(query)}`,
-            {
-                headers: {
-                    ...this.pageHeaders(this.base),
-                    Accept: "application/json, text/plain, */*"
-                }
+        const url =
+            `${this.base}/api/search?q=${encodeURIComponent(query)}`;
+
+        const response = await fetch(url, {
+            headers: {
+                ...this.pageHeaders(this.base),
+                Accept: "application/json, text/plain, */*"
             }
-        );
+        });
 
         if (!response.ok) {
             throw new Error(
-                `AnimeUnity search error: HTTP ${response.status}`
+                `AnimeUnity search failed: HTTP ${response.status}`
             );
         }
 
-        const result = await response.json() as SearchResponse;
+        const text = await response.text();
+        const payload = this.parseJson(text);
 
-        if (!Array.isArray(result.data)) {
+        if (!payload) {
             throw new Error(
                 "AnimeUnity returned an invalid search response."
             );
         }
 
-        const requestedLanguage = opts.dub ? "ita" : "jpn";
+        const records = this.extractAnimeRecords(payload);
 
-        return result.data
-            .filter(anime => {
-                if (!anime.id || !anime.slug) return false;
+        if (records.length === 0) {
+            return [];
+        }
 
-                const variants = anime.variants || [];
+        const results: SearchResult[] = [];
 
-                return variants.some(
+        for (const anime of records) {
+            if (!anime.id || !anime.slug) {
+                continue;
+            }
+
+            const variants = anime.variants || [];
+
+            // Filter by language only when the API actually
+            // provides language information.
+            if (variants.length > 0) {
+                const requestedLanguage = opts.dub ? "ita" : "jpn";
+
+                const hasLanguage = variants.some(
                     variant =>
-                        variant.language === requestedLanguage
+                        (variant.language || "").toLowerCase() ===
+                        requestedLanguage
                 );
-            })
-            .map(anime => ({
-                id: `${anime.id}-${anime.slug}`,
-                title: anime.title || anime.slug,
-                url: `${this.base}/anime/${anime.id}-${anime.slug}`,
+
+                if (!hasLanguage) {
+                    continue;
+                }
+            }
+
+            const animeId = String(anime.id);
+            const slug = String(anime.slug);
+
+            results.push({
+                id: `${animeId}-${slug}`,
+                title:
+                    anime.title_it ||
+                    anime.title ||
+                    anime.title_eng ||
+                    slug,
+                url: `${this.base}/anime/${animeId}-${slug}`,
                 subOrDub: opts.dub ? "dub" : "sub"
-            }));
+            });
+        }
+
+        return results;
     }
 
-    // --------------------------------------------------
-    // EPISODES
-    // --------------------------------------------------
+    // ==================================================
+    // EXTRACT SEARCH RESULTS
+    // ==================================================
+
+    private extractAnimeRecords(payload: any): AnimeRecord[] {
+        if (Array.isArray(payload)) {
+            return payload as AnimeRecord[];
+        }
+
+        if (!payload || typeof payload !== "object") {
+            return [];
+        }
+
+        const possibleArrays = [
+            payload.data,
+            payload.results,
+            payload.animes,
+            payload.items,
+            payload.data?.data,
+            payload.data?.results,
+            payload.data?.animes
+        ];
+
+        for (const value of possibleArrays) {
+            if (Array.isArray(value)) {
+                return value as AnimeRecord[];
+            }
+        }
+
+        return [];
+    }
+
+    // ==================================================
+    // FIND EPISODES
+    // ==================================================
 
     async findEpisodes(id: string): Promise<EpisodeDetails[]> {
         const match = id.match(/^(\d+)-(.+)$/);
@@ -184,87 +238,107 @@ class Provider {
         const pageUrl =
             `${this.base}/anime/${animeId}-${slug}`;
 
-        // Load anime page through Inertia.
-        const pageResponse = await fetch(
-            pageUrl,
-            {
-                headers: this.inertiaHeaders(this.base)
-            }
-        );
+        const response = await fetch(pageUrl, {
+            headers: this.inertiaHeaders(this.base)
+        });
 
-        if (!pageResponse.ok) {
+        if (!response.ok) {
             throw new Error(
-                `AnimeUnity anime page error: HTTP ${pageResponse.status}`
+                `AnimeUnity anime page failed: HTTP ${response.status}`
             );
         }
 
-        const page = await pageResponse.json() as AnimePageProps;
+        const pageText = await response.text();
+
+        const page = this.parseAnimePage(pageText);
+
+        if (!page) {
+            throw new Error(
+                "Unable to read AnimeUnity page data. " +
+                "The page did not contain valid Inertia information."
+            );
+        }
 
         const loaded = page.props?.loadedEpisodes;
 
         if (!loaded || !Array.isArray(loaded.episodes)) {
             throw new Error(
-                "AnimeUnity episode list was not found."
+                "AnimeUnity did not provide the episode list."
             );
         }
 
-        let records: EpisodeRecord[] = [
-            ...loaded.episodes
-        ];
-
-        const total = Number(loaded.total || 0);
-        const pageSize = Number(
-            loaded.tab_size || this.episodePageSize
-        );
-
-        // Load remaining episode pages.
-        for (
-            let start = Number(loaded.start) + pageSize;
-            start <= total;
-            start += pageSize
-        ) {
-            const endpoint =
-                `${this.base}/api/anime/${animeId}/episodes?start=${start}`;
-
-            const response = await fetch(
-                endpoint,
-                {
-                    headers: {
-                        ...this.pageHeaders(pageUrl),
-                        Accept: "application/json, text/plain, */*"
-                    }
-                }
-            );
-
-            if (!response.ok) {
-                throw new Error(
-                    `AnimeUnity episodes error: HTTP ${response.status}`
-                );
-            }
-
-            const data = await response.json() as EpisodesResponse;
-
-            if (!Array.isArray(data.episodes)) {
-                throw new Error(
-                    `Invalid episode response at offset ${start}.`
-                );
-            }
-
-            if (data.episodes.length === 0) break;
-
-            records.push(...data.episodes);
+        if (loaded.episodes.length === 0) {
+            return [];
         }
 
         return this.convertEpisodes(
-            records,
+            loaded.episodes,
             animeId,
             slug
         );
     }
 
-    // --------------------------------------------------
+    // ==================================================
+    // PARSE ANIME PAGE
+    // ==================================================
+
+    private parseAnimePage(text: string): AnimePageProps | null {
+        if (!text) {
+            return null;
+        }
+
+        // First possibility: Inertia JSON response.
+        const json = this.parseJson(text);
+
+        if (json && json.props) {
+            return json as AnimePageProps;
+        }
+
+        // Second possibility: regular HTML page.
+        // Inertia stores its page payload inside #app[data-page].
+        const match = text.match(
+            /data-page\s*=\s*["']([\s\S]*?)["']/i
+        );
+
+        if (match && match[1]) {
+            const decoded = this.decodeHtml(match[1]);
+            const parsed = this.parseJson(decoded);
+
+            if (parsed && parsed.props) {
+                return parsed as AnimePageProps;
+            }
+        }
+
+        // Last possibility: escaped page payload.
+        const embedded = text.match(
+            /"loadedEpisodes"\s*:\s*\{[\s\S]*?\}\s*\}/
+        );
+
+        if (embedded) {
+            const start = text.lastIndexOf("{", embedded.index || 0);
+
+            if (start >= 0) {
+                const object = this.extractBalancedObject(
+                    text,
+                    start
+                );
+
+                if (object) {
+                    const parsed = this.parseJson(object);
+
+                    if (parsed?.props) {
+                        return parsed as AnimePageProps;
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    // ==================================================
     // CONVERT EPISODES
-    // --------------------------------------------------
+    // ==================================================
 
     private convertEpisodes(
         records: EpisodeRecord[],
@@ -272,135 +346,187 @@ class Provider {
         slug: string
     ): EpisodeDetails[] {
         const results: EpisodeDetails[] = [];
-        const seen = new Set<string>();
+        const seen: { [key: string]: boolean } = {};
 
         for (const episode of records) {
-            const number = Number(
-                episode.seq_number_start ||
-                episode.number
-            );
-
-            if (!Number.isFinite(number) || number <= 0) {
+            if (!episode) {
                 continue;
             }
 
-            for (const video of episode.videos || []) {
+            const rawNumber =
+                episode.seq_number_start ||
+                episode.number;
+
+            const number = this.parseEpisodeNumber(rawNumber);
+
+            if (!number || number <= 0) {
+                continue;
+            }
+
+            const videos = episode.videos || [];
+
+            for (const video of videos) {
                 if (
+                    !video ||
                     video.is_hidden ||
-                    !video.id ||
-                    !video.scws_id
+                    !video.id
                 ) {
                     continue;
                 }
 
-                const language =
-                    video.language === "ita"
-                        ? "ITA"
-                        : video.language === "jpn"
-                            ? "SUB"
-                            : video.language.toUpperCase();
+                const videoId = String(video.id);
 
-                const uniqueId = String(video.id);
+                if (seen[videoId]) {
+                    continue;
+                }
 
-                if (seen.has(uniqueId)) continue;
+                seen[videoId] = true;
 
-                seen.add(uniqueId);
+                const language = this.getLanguageLabel(
+                    video.language
+                );
 
                 const filler = episode.is_filler
                     ? " [Filler]"
                     : "";
 
                 results.push({
-                    id: uniqueId,
+                    id: videoId,
                     number,
-                    title: `Episodio ${number} [${language}]${filler}`,
+                    title:
+                        `Episodio ${number} [${language}]${filler}`,
                     url:
-                        `${this.base}/anime/${animeId}-${slug}/${video.id}`
+                        `${this.base}/anime/${animeId}-${slug}/${videoId}`
                 });
             }
         }
 
-        return results.sort((a, b) => {
+        results.sort((a, b) => {
             if (a.number !== b.number) {
                 return a.number - b.number;
             }
 
-            // Italian version before Japanese version.
             const aDub = a.title.includes("[ITA]");
             const bDub = b.title.includes("[ITA]");
 
-            if (aDub && !bDub) return -1;
-            if (!aDub && bDub) return 1;
+            if (aDub && !bDub) {
+                return -1;
+            }
+
+            if (!aDub && bDub) {
+                return 1;
+            }
 
             return 0;
         });
+
+        return results;
     }
 
-    // --------------------------------------------------
-    // VIDEO SERVER
-    // --------------------------------------------------
+    // ==================================================
+    // EPISODE NUMBER
+    // ==================================================
+
+    private parseEpisodeNumber(value: any): number {
+        if (value === undefined || value === null) {
+            return 0;
+        }
+
+        const text = String(value).trim();
+
+        const match = text.match(/^\d+/);
+
+        if (!match) {
+            return 0;
+        }
+
+        const number = parseInt(match[0], 10);
+
+        return Number.isFinite(number) ? number : 0;
+    }
+
+    // ==================================================
+    // LANGUAGE LABEL
+    // ==================================================
+
+    private getLanguageLabel(language?: string): string {
+        const value = (language || "").toLowerCase();
+
+        if (value === "ita") {
+            return "ITA";
+        }
+
+        if (value === "jpn") {
+            return "SUB";
+        }
+
+        if (value === "eng") {
+            return "ENG";
+        }
+
+        return value ? value.toUpperCase() : "ALTRO";
+    }
+
+    // ==================================================
+    // FIND EPISODE SERVER
+    // ==================================================
 
     async findEpisodeServer(
         episode: EpisodeDetails,
         server: string
     ): Promise<EpisodeServer> {
+        if (!episode.url) {
+            throw new Error(
+                "AnimeUnity episode URL is missing."
+            );
+        }
 
         const episodeUrl = episode.url.startsWith("http")
             ? episode.url
             : `${this.base}/${episode.url.replace(/^\/+/, "")}`;
 
-        // Request the selected episode using Inertia.
-        const episodeResponse = await fetch(
-            episodeUrl,
-            {
-                headers: this.inertiaHeaders(this.base)
-            }
-        );
+        // Request the selected episode page.
+        const episodeResponse = await fetch(episodeUrl, {
+            headers: this.inertiaHeaders(this.base)
+        });
 
         if (!episodeResponse.ok) {
             throw new Error(
-                `AnimeUnity video page error: HTTP ${episodeResponse.status}`
+                `AnimeUnity episode request failed: HTTP ${episodeResponse.status}`
             );
         }
 
-        const pageText = await episodeResponse.text();
+        const episodeText = await episodeResponse.text();
+
+        const episodePage = this.parseAnimePage(episodeText);
 
         let embedUrl: string | null = null;
 
-        // Inertia JSON response.
-        try {
-            const page = JSON.parse(pageText) as AnimePageProps;
-            embedUrl = page.props?.embedUrl || null;
-        } catch {
-            // Fallback for HTML responses.
-            const match = pageText.match(
-                /"embedUrl"\s*:\s*"([^"]+)"/
-            );
+        if (episodePage?.props?.embedUrl) {
+            embedUrl = episodePage.props.embedUrl;
+        }
 
-            if (match) {
-                embedUrl = match[1]
-                    .replace(/\\\//g, "/")
-                    .replace(/\\u0026/g, "&");
-            }
+        // HTML / serialized JSON fallback.
+        if (!embedUrl) {
+            embedUrl = this.extractEmbedUrl(episodeText);
         }
 
         if (!embedUrl) {
             throw new Error(
-                "AnimeUnity did not return the VixCloud embed URL."
+                "AnimeUnity did not return a VixCloud embed URL."
             );
         }
 
-        // Load VixCloud player page.
-        const embedResponse = await fetch(
-            embedUrl,
-            {
-                headers: this.pageHeaders(this.base)
-            }
-        );
+        embedUrl = this.decodeUrl(embedUrl);
+
+        // Load VixCloud embed.
+        const embedResponse = await fetch(embedUrl, {
+            headers: this.pageHeaders(episodeUrl)
+        });
 
         if (!embedResponse.ok) {
             throw new Error(
-                `VixCloud embed error: HTTP ${embedResponse.status}`
+                `VixCloud embed failed: HTTP ${embedResponse.status}`
             );
         }
 
@@ -414,12 +540,13 @@ class Provider {
             embedUrl
         );
 
-        const origin = new URL(embedUrl).origin;
+        const origin = this.getOrigin(embedUrl);
 
         return {
-            server: server === "default"
-                ? "vixcloud"
-                : server,
+            server:
+                server === "default"
+                    ? "vixcloud"
+                    : server,
 
             headers: {
                 Referer: `${origin}/`,
@@ -438,14 +565,42 @@ class Provider {
         };
     }
 
-    // --------------------------------------------------
-    // VIXCLOUD MASTER PLAYLIST
-    // --------------------------------------------------
+    // ==================================================
+    // EXTRACT EMBED URL
+    // ==================================================
 
-    private parseMasterPlaylist(
-        html: string
-    ): MasterPlaylist {
+    private extractEmbedUrl(text: string): string | null {
+        if (!text) {
+            return null;
+        }
 
+        const patterns = [
+            /"embedUrl"\s*:\s*"([^"]+)"/i,
+            /'embedUrl'\s*:\s*'([^']+)'/i,
+            /embed_url\s*=\s*["']([^"']+)["']/i,
+            /https?:\\?\/\\?\/[^"'\\\s<>]+\/embed\/[^"'\\\s<>]+/i
+        ];
+
+        for (const pattern of patterns) {
+            const match = text.match(pattern);
+
+            if (match && match[1]) {
+                return this.decodeUrl(match[1]);
+            }
+
+            if (match && match[0]) {
+                return this.decodeUrl(match[0]);
+            }
+        }
+
+        return null;
+    }
+
+    // ==================================================
+    // PARSE VIXCLOUD MASTER PLAYLIST
+    // ==================================================
+
+    private parseMasterPlaylist(html: string): MasterPlaylist {
         const assignment = "window.masterPlaylist";
 
         const index = html.indexOf(assignment);
@@ -463,7 +618,7 @@ class Provider {
 
         if (start < 0) {
             throw new Error(
-                "Invalid VixCloud masterPlaylist."
+                "Invalid VixCloud masterPlaylist object."
             );
         }
 
@@ -474,7 +629,7 @@ class Provider {
 
         if (!object) {
             throw new Error(
-                "Unable to read VixCloud playlist metadata."
+                "Unable to extract VixCloud playlist metadata."
             );
         }
 
@@ -485,7 +640,7 @@ class Provider {
 
         if (!params) {
             throw new Error(
-                "VixCloud playlist parameters not found."
+                "VixCloud playlist parameters were not found."
             );
         }
 
@@ -511,7 +666,7 @@ class Provider {
 
         if (!url || !token || !expires) {
             throw new Error(
-                "Incomplete VixCloud playlist information."
+                "VixCloud returned incomplete playlist information."
             );
         }
 
@@ -525,69 +680,98 @@ class Provider {
         };
     }
 
-    // --------------------------------------------------
-    // BUILD HLS URL
-    // --------------------------------------------------
+    // ==================================================
+    // BUILD HLS PLAYLIST URL
+    // ==================================================
 
     private buildPlaylistUrl(
         master: MasterPlaylist,
         html: string,
         embedUrl: string
     ): string {
+        let url = this.decodeUrl(master.url);
 
-        const url = new URL(master.url);
+        const query: string[] = [];
 
-        url.searchParams.set(
-            "token",
-            master.params.token
+        const questionIndex = url.indexOf("?");
+
+        let existingQuery = "";
+
+        if (questionIndex >= 0) {
+            existingQuery = url.substring(questionIndex + 1);
+            url = url.substring(0, questionIndex);
+        }
+
+        if (existingQuery) {
+            const parts = existingQuery.split("&");
+
+            for (const part of parts) {
+                if (
+                    part.indexOf("token=") === 0 ||
+                    part.indexOf("expires=") === 0 ||
+                    part.indexOf("asn=") === 0 ||
+                    part.indexOf("h=") === 0
+                ) {
+                    continue;
+                }
+
+                if (part) {
+                    query.push(part);
+                }
+            }
+        }
+
+        query.push(
+            `token=${encodeURIComponent(master.params.token)}`
         );
 
-        url.searchParams.set(
-            "expires",
-            master.params.expires
+        query.push(
+            `expires=${encodeURIComponent(master.params.expires)}`
         );
 
         if (master.params.asn) {
-            url.searchParams.set(
-                "asn",
-                master.params.asn
+            query.push(
+                `asn=${encodeURIComponent(master.params.asn)}`
             );
         }
 
         const canPlayFHD =
             /window\.canPlayFHD\s*=\s*true\b/.test(html) ||
-            new URL(embedUrl).searchParams.get("canPlayFHD") === "1";
+            /[?&]canPlayFHD=1(?:&|$)/.test(embedUrl);
 
         if (canPlayFHD) {
-            url.searchParams.set("h", "1");
+            query.push("h=1");
         }
 
-        return url.toString();
+        return `${url}?${query.join("&")}`;
     }
 
-    // --------------------------------------------------
-    // JAVASCRIPT OBJECT PARSING
-    // --------------------------------------------------
+    // ==================================================
+    // EXTRACT JAVASCRIPT OBJECT
+    // ==================================================
 
     private extractPropertyObject(
         source: string,
         property: string
     ): string | null {
-
         const regex = new RegExp(
             `(?:['"]?${property}['"]?)\\s*:`
         );
 
         const match = regex.exec(source);
 
-        if (!match) return null;
+        if (!match) {
+            return null;
+        }
 
         const start = source.indexOf(
             "{",
             match.index + match[0].length
         );
 
-        if (start < 0) return null;
+        if (start < 0) {
+            return null;
+        }
 
         return this.extractBalancedObject(
             source,
@@ -595,11 +779,14 @@ class Provider {
         );
     }
 
+    // ==================================================
+    // BALANCED OBJECT PARSER
+    // ==================================================
+
     private extractBalancedObject(
         source: string,
         start: number
     ): string | null {
-
         let depth = 0;
         let quote = "";
         let escaped = false;
@@ -627,7 +814,7 @@ class Provider {
                 depth--;
 
                 if (depth === 0) {
-                    return source.slice(start, i + 1);
+                    return source.substring(start, i + 1);
                 }
             }
         }
@@ -635,32 +822,96 @@ class Provider {
         return null;
     }
 
+    // ==================================================
+    // EXTRACT STRING PROPERTY
+    // ==================================================
+
     private extractStringProperty(
         source: string,
         property: string
     ): string | null {
-
         const regex = new RegExp(
             `(?:['"]?${property}['"]?)\\s*:\\s*(['"])([\\s\\S]*?)\\1`
         );
 
         const match = regex.exec(source);
 
-        if (!match) return null;
+        if (!match) {
+            return null;
+        }
 
-        return match[2]
-            .replace(/\\u0026/g, "&")
-            .replace(/\\\//g, "/")
-            .replace(/\\(['"])/g, "$1");
+        return this.decodeUrl(match[2]);
     }
 
-    // --------------------------------------------------
-    // REQUEST HEADERS
-    // --------------------------------------------------
+    // ==================================================
+    // JSON PARSER
+    // ==================================================
 
-    private pageHeaders(
-        referer: string
-    ): RequestHeaders {
+    private parseJson(text: string): any {
+        if (!text) {
+            return null;
+        }
+
+        try {
+            return JSON.parse(text);
+        } catch (_) {
+            return null;
+        }
+    }
+
+    // ==================================================
+    // HTML DECODER
+    // ==================================================
+
+    private decodeHtml(value: string): string {
+        return value
+            .replace(/&quot;/g, '"')
+            .replace(/&#34;/g, '"')
+            .replace(/&#39;/g, "'")
+            .replace(/&apos;/g, "'")
+            .replace(/&amp;/g, "&")
+            .replace(/&lt;/g, "<")
+            .replace(/&gt;/g, ">");
+    }
+
+    // ==================================================
+    // URL DECODER
+    // ==================================================
+
+    private decodeUrl(value: string): string {
+        return value
+            .replace(/\\u0026/g, "&")
+            .replace(/\\u003d/g, "=")
+            .replace(/\\u002f/g, "/")
+            .replace(/\\\//g, "/")
+            .replace(/&amp;/g, "&")
+            .replace(/\\(['"])/g, "$1")
+            .trim();
+    }
+
+    // ==================================================
+    // GET URL ORIGIN
+    // ==================================================
+
+    private getOrigin(url: string): string {
+        const match = url.match(
+            /^(https?:\/\/[^/]+)/i
+        );
+
+        if (!match) {
+            throw new Error(
+                "Invalid VixCloud embed URL."
+            );
+        }
+
+        return match[1];
+    }
+
+    // ==================================================
+    // REQUEST HEADERS
+    // ==================================================
+
+    private pageHeaders(referer: string): RequestHeaders {
         return {
             "User-Agent": this.agent,
             Referer: referer,
@@ -669,9 +920,7 @@ class Provider {
         };
     }
 
-    private inertiaHeaders(
-        referer: string
-    ): RequestHeaders {
+    private inertiaHeaders(referer: string): RequestHeaders {
         return {
             "User-Agent": this.agent,
             Referer: referer,
