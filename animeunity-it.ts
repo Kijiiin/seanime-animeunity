@@ -6,7 +6,7 @@
  * already delivered by the site. No login, paywall, CAPTCHA or DRM handling.
  */
 class Provider {
-    private readonly base = "https://www.animeunity.co"
+    private readonly base = "https://www.animeunity.cx"
     private readonly agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122 Safari/537.36"
 
     getSettings(): Settings {
