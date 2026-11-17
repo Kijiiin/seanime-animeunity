@@ -8,14 +8,12 @@
  *
  * Gestione:
  * - Ricerca anime tramite API pubblica
- * - Pagine AnimeUnity con risposte Inertia JSON o HTML
+ * - Pagine AnimeUnity in HTML con payload Inertia incorporato
  * - Estrazione episodi e varianti linguistiche
  * - Estrazione dinamica dell'embed VixCloud
  * - Costruzione URL HLS con token temporanei
  *
- * Nota:
- * La paginazione oltre gli episodi caricati inizialmente
- * non viene richiesta tramite endpoint non verificati.
+ * - Paginazione completa tramite l'endpoint usato dal lettore AnimeUnity
  */
 
 type AnimeVariant = {
@@ -64,6 +62,10 @@ type LoadedEpisodes = {
     tab_size?: number;
     total?: number;
     offset?: number;
+};
+
+type EpisodesPage = {
+    episodes?: EpisodeRecord[];
 };
 
 type AnimePageProps = {
@@ -238,8 +240,11 @@ class Provider {
         const pageUrl =
             `${this.base}/anime/${animeId}-${slug}`;
 
+        // AnimeUnity returns HTTP 409 to an Inertia request without the
+        // current X-Inertia-Version. The normal HTML response is stable and
+        // contains the same page payload in #app[data-page].
         const response = await fetch(pageUrl, {
-            headers: this.inertiaHeaders(this.base)
+            headers: this.pageHeaders(this.base)
         });
 
         if (!response.ok) {
@@ -271,11 +276,80 @@ class Provider {
             return [];
         }
 
+        const episodes = await this.loadAllEpisodes(
+            loaded,
+            animeId,
+            pageUrl
+        );
+
         return this.convertEpisodes(
-            loaded.episodes,
+            episodes,
             animeId,
             slug
         );
+    }
+
+    // ==================================================
+    // LOAD ALL EPISODE TABS
+    // ==================================================
+
+    private async loadAllEpisodes(
+        loaded: LoadedEpisodes,
+        animeId: string,
+        referer: string
+    ): Promise<EpisodeRecord[]> {
+        const episodes = [...(loaded.episodes || [])];
+        const tabSize = Number(loaded.tab_size) || episodes.length;
+        const total = Number(loaded.total) || episodes.length;
+        const firstStart = Number(loaded.start) ||
+            Number(loaded.offset) || 1;
+
+        // A malformed pagination payload must never turn a playable anime
+        // into an unusable one. The first tab remains available in that case.
+        if (tabSize <= 0 || total <= episodes.length || total > 10000) {
+            return episodes;
+        }
+
+        for (
+            let start = firstStart + tabSize;
+            start < firstStart + total;
+            start += tabSize
+        ) {
+            const url =
+                `${this.base}/api/anime/${encodeURIComponent(animeId)}` +
+                `/episodes?start=${encodeURIComponent(String(start))}`;
+
+            try {
+                const response = await fetch(url, {
+                    headers: {
+                        ...this.pageHeaders(referer),
+                        Accept: "application/json, text/plain, */*"
+                    }
+                });
+
+                if (!response.ok) {
+                    break;
+                }
+
+                const page = this.parseJson(await response.text()) as
+                    EpisodesPage | null;
+                const next = page?.episodes;
+
+                if (!Array.isArray(next) || next.length === 0) {
+                    break;
+                }
+
+                episodes.push(...next);
+
+                if (next.length < tabSize) {
+                    break;
+                }
+            } catch (_) {
+                break;
+            }
+        }
+
+        return episodes;
     }
 
     // ==================================================
@@ -487,7 +561,7 @@ class Provider {
 
         // Request the selected episode page.
         const episodeResponse = await fetch(episodeUrl, {
-            headers: this.inertiaHeaders(this.base)
+            headers: this.pageHeaders(this.base)
         });
 
         if (!episodeResponse.ok) {
@@ -920,13 +994,4 @@ class Provider {
         };
     }
 
-    private inertiaHeaders(referer: string): RequestHeaders {
-        return {
-            "User-Agent": this.agent,
-            Referer: referer,
-            Accept: "text/html, application/xhtml+xml",
-            "X-Inertia": "true",
-            "X-Requested-With": "XMLHttpRequest"
-        };
-    }
 }
