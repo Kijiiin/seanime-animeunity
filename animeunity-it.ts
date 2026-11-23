@@ -91,6 +91,8 @@ type RequestHeaders = {
     [key: string]: string;
 };
 
+type StreamLanguage = "ita" | "jpn";
+
 class Provider {
     private readonly base = "https://animeunity.cx";
 
@@ -162,7 +164,7 @@ class Provider {
 
                 const hasLanguage = variants.some(
                     variant =>
-                        (variant.language || "").toLowerCase() ===
+                        this.normalizeLanguage(variant.language) ===
                         requestedLanguage
                 );
 
@@ -173,9 +175,13 @@ class Provider {
 
             const animeId = String(anime.id);
             const slug = String(anime.slug);
+            const language: StreamLanguage = opts.dub ? "ita" : "jpn";
 
             results.push({
-                id: `${animeId}-${slug}`,
+                // Seanime only passes the result ID to findEpisodes. Keep the
+                // selected language in that ID so a title available in both
+                // versions cannot merge its dubbed and subtitled episodes.
+                id: `${animeId}-${slug}::${language}`,
                 title:
                     anime.title_it ||
                     anime.title ||
@@ -226,7 +232,7 @@ class Provider {
     // ==================================================
 
     async findEpisodes(id: string): Promise<EpisodeDetails[]> {
-        const match = id.match(/^(\d+)-(.+)$/);
+        const match = id.match(/^(\d+)-(.+?)(?:::(ita|jpn))?$/);
 
         if (!match) {
             throw new Error(
@@ -236,6 +242,7 @@ class Provider {
 
         const animeId = match[1];
         const slug = match[2];
+        const language = match[3] as StreamLanguage | undefined;
 
         const pageUrl =
             `${this.base}/anime/${animeId}-${slug}`;
@@ -285,7 +292,8 @@ class Provider {
         return this.convertEpisodes(
             episodes,
             animeId,
-            slug
+            slug,
+            language
         );
     }
 
@@ -417,7 +425,8 @@ class Provider {
     private convertEpisodes(
         records: EpisodeRecord[],
         animeId: string,
-        slug: string
+        slug: string,
+        requestedLanguage?: StreamLanguage
     ): EpisodeDetails[] {
         const results: EpisodeDetails[] = [];
         const seen: { [key: string]: boolean } = {};
@@ -444,6 +453,17 @@ class Provider {
                     !video ||
                     video.is_hidden ||
                     !video.id
+                ) {
+                    continue;
+                }
+
+                // A search result is explicitly either dubbed or subtitled.
+                // Do not expose the other language as another episode with
+                // the same number: Seanime would otherwise queue both HLS
+                // streams and VixCloud can desynchronise audio and video.
+                if (
+                    requestedLanguage &&
+                    this.normalizeLanguage(video.language) !== requestedLanguage
                 ) {
                     continue;
                 }
@@ -524,7 +544,8 @@ class Provider {
     // ==================================================
 
     private getLanguageLabel(language?: string): string {
-        const value = (language || "").toLowerCase();
+        const value = this.normalizeLanguage(language) ||
+            (language || "").toLowerCase();
 
         if (value === "ita") {
             return "ITA";
@@ -539,6 +560,20 @@ class Provider {
         }
 
         return value ? value.toUpperCase() : "ALTRO";
+    }
+
+    private normalizeLanguage(language?: string): StreamLanguage | "" {
+        const value = (language || "").trim().toLowerCase();
+
+        if (value === "ita" || value === "it" || value === "italian") {
+            return "ita";
+        }
+
+        if (value === "jpn" || value === "ja" || value === "japanese") {
+            return "jpn";
+        }
+
+        return "";
     }
 
     // ==================================================
