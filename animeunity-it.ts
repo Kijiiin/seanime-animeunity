@@ -91,8 +91,6 @@ type RequestHeaders = {
     [key: string]: string;
 };
 
-type StreamLanguage = "ita" | "jpn";
-
 class Provider {
     private readonly base = "https://animeunity.cx";
 
@@ -164,7 +162,7 @@ class Provider {
 
                 const hasLanguage = variants.some(
                     variant =>
-                        this.normalizeLanguage(variant.language) ===
+                        (variant.language || "").toLowerCase() ===
                         requestedLanguage
                 );
 
@@ -175,13 +173,9 @@ class Provider {
 
             const animeId = String(anime.id);
             const slug = String(anime.slug);
-            const language: StreamLanguage = opts.dub ? "ita" : "jpn";
 
             results.push({
-                // Seanime only passes the result ID to findEpisodes. Keep the
-                // selected language in that ID so a title available in both
-                // versions cannot merge its dubbed and subtitled episodes.
-                id: `${animeId}-${slug}::${language}`,
+                id: `${animeId}-${slug}`,
                 title:
                     anime.title_it ||
                     anime.title ||
@@ -232,7 +226,7 @@ class Provider {
     // ==================================================
 
     async findEpisodes(id: string): Promise<EpisodeDetails[]> {
-        const match = id.match(/^(\d+)-(.+?)(?:::(ita|jpn))?$/);
+        const match = id.match(/^(\d+)-(.+)$/);
 
         if (!match) {
             throw new Error(
@@ -242,7 +236,6 @@ class Provider {
 
         const animeId = match[1];
         const slug = match[2];
-        const language = match[3] as StreamLanguage | undefined;
 
         const pageUrl =
             `${this.base}/anime/${animeId}-${slug}`;
@@ -292,8 +285,7 @@ class Provider {
         return this.convertEpisodes(
             episodes,
             animeId,
-            slug,
-            language
+            slug
         );
     }
 
@@ -425,8 +417,7 @@ class Provider {
     private convertEpisodes(
         records: EpisodeRecord[],
         animeId: string,
-        slug: string,
-        requestedLanguage?: StreamLanguage
+        slug: string
     ): EpisodeDetails[] {
         const results: EpisodeDetails[] = [];
         const seen: { [key: string]: boolean } = {};
@@ -453,17 +444,6 @@ class Provider {
                     !video ||
                     video.is_hidden ||
                     !video.id
-                ) {
-                    continue;
-                }
-
-                // A search result is explicitly either dubbed or subtitled.
-                // Do not expose the other language as another episode with
-                // the same number: Seanime would otherwise queue both HLS
-                // streams and VixCloud can desynchronise audio and video.
-                if (
-                    requestedLanguage &&
-                    this.normalizeLanguage(video.language) !== requestedLanguage
                 ) {
                     continue;
                 }
@@ -544,8 +524,7 @@ class Provider {
     // ==================================================
 
     private getLanguageLabel(language?: string): string {
-        const value = this.normalizeLanguage(language) ||
-            (language || "").toLowerCase();
+        const value = (language || "").toLowerCase();
 
         if (value === "ita") {
             return "ITA";
@@ -560,20 +539,6 @@ class Provider {
         }
 
         return value ? value.toUpperCase() : "ALTRO";
-    }
-
-    private normalizeLanguage(language?: string): StreamLanguage | "" {
-        const value = (language || "").trim().toLowerCase();
-
-        if (value === "ita" || value === "it" || value === "italian") {
-            return "ita";
-        }
-
-        if (value === "jpn" || value === "ja" || value === "japanese") {
-            return "jpn";
-        }
-
-        return "";
     }
 
     // ==================================================
@@ -650,6 +615,32 @@ class Provider {
         );
 
         const origin = this.getOrigin(embedUrl);
+        const downloadUrl = this.extractDownloadUrl(embedHtml);
+        const useDownload =
+            this.isSubtitledEpisode(episode) &&
+            !!downloadUrl;
+
+        const videoSources: VideoSource[] = [];
+
+        // VixCloud's HLS 1080p rendition can omit embedded subtitles when
+        // played outside its own player. For SUB episodes, its public MP4
+        // download is the same release and keeps the subtitle stream intact.
+        if (useDownload && downloadUrl) {
+            videoSources.push({
+                url: downloadUrl,
+                type: "mp4",
+                quality: "1080p",
+                label: "SUB 1080p",
+                subtitles: []
+            });
+        }
+
+        videoSources.push({
+            url: playlistUrl,
+            type: "m3u8",
+            quality: useDownload ? "fallback" : "auto",
+            subtitles: []
+        });
 
         return {
             server:
@@ -663,14 +654,7 @@ class Provider {
                 "User-Agent": this.agent
             },
 
-            videoSources: [
-                {
-                    url: playlistUrl,
-                    type: "m3u8",
-                    quality: "auto",
-                    subtitles: []
-                }
-            ]
+            videoSources
         };
     }
 
@@ -703,6 +687,36 @@ class Provider {
         }
 
         return null;
+    }
+
+    private extractDownloadUrl(text: string): string | null {
+        if (!text) {
+            return null;
+        }
+
+        const patterns = [
+            /window\.downloadUrl\s*=\s*["']([^"']+)["']/i,
+            /["']downloadUrl["']\s*:\s*["']([^"']+)["']/i,
+            /["']download_url["']\s*:\s*["']([^"']+)["']/i
+        ];
+
+        for (const pattern of patterns) {
+            const match = text.match(pattern);
+
+            if (match && match[1]) {
+                const url = this.decodeUrl(match[1]);
+
+                if (/\.mp4(?:[?&]|$)/i.test(url)) {
+                    return url;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private isSubtitledEpisode(episode: EpisodeDetails): boolean {
+        return /\[SUB\]/i.test(episode.title || "");
     }
 
     // ==================================================
