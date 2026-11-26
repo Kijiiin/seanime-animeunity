@@ -3,12 +3,12 @@
   "name": "AnimeUnity Schedule (IT)",
   "description": "Aggiunge al calendario di SeaAnime le uscite di AnimeUnity presenti nella tua lista.",
   "version": "1.0.0",
-  "manifestURI": "",
+  "manifestURI": "https://raw.githubusercontent.com/Kijiiin/seanime-animeunity/refs/heads/main/Schedule/animeunity-schedule.json",
   "author": "Kijiiin",
   "type": "plugin",
   "language": "typescript",
   "lang": "it",
-  "payloadURI": "",
+  "payloadURI": "https://raw.githubusercontent.com/Kijiiin/seanime-animeunity/refs/heads/main/Schedule/animeunity-schedule.ts",
   "plugin": {
     "version": "1",
     "permissions": {
