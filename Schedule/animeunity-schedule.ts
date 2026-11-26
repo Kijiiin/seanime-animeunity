@@ -41,7 +41,10 @@ type CalendarRelease = {
 const SOURCE_PREFIX = "🇮🇹 AnimeUnity — ";
 const ITEMS_KEY = "animeunity-schedule-items";
 const UPDATED_KEY = "animeunity-schedule-updated-at";
+const ERROR_KEY = "animeunity-schedule-error";
+const TRAY_SEEN_KEY = "animeunity-schedule-tray-seen";
 const CALENDAR_URL = "https://animeunity.cx/api/calendar";
+const TRAY_ICON = "https://animeunity.cx/icon/favicon-32x32.png";
 
 function init() {
     // SeaAnime calls this immediately before rendering the schedule. Keeping
@@ -91,22 +94,43 @@ function init() {
 
         const tray = ctx.newTray({
             tooltipText: "Palinsesto AnimeUnity",
+            iconUrl: TRAY_ICON,
+            width: "380px",
+            minHeight: "260px",
             withContent: true
         });
 
+        // A badge makes the extension visible in SeaAnime's “Tray Plugins”
+        // launcher even before the user chooses to pin it to the sidebar.
+        tray.updateBadge({ number: 1, intent: "info" });
+
         ctx.registerEventHandler("refresh-animeunity-schedule", async () => {
             ctx.toast.info("AnimeUnity: aggiornamento del palinsesto…");
-            await refreshSchedule(ctx, true);
+            await refreshSchedule(ctx, tray, true);
         });
 
         tray.render(() => {
             const updatedAt = $store.get(UPDATED_KEY) || "Mai";
+            const error = $store.get(ERROR_KEY) || "";
+            const items = $store.get(ITEMS_KEY) || [];
+            const nextItems = items.slice(0, 6);
             return tray.stack({
                 gap: 2,
                 items: [
                     tray.text("Palinsesto AnimeUnity"),
                     tray.text("Solo titoli della tua lista SeaAnime."),
                     tray.text(`Aggiornato: ${updatedAt}`),
+                    tray.text(`Uscite trovate: ${items.length}`),
+                    ...(error ? [tray.alert({
+                        title: "Aggiornamento non riuscito",
+                        description: error,
+                        intent: "alert"
+                    })] : []),
+                    ...(nextItems.length > 0
+                        ? [tray.text("Prossime uscite:"), ...nextItems.map((item: any) =>
+                            tray.text(`• ${item.title} — episodio ${item.episodeNumber} (${item.time})`)
+                        )]
+                        : [tray.text("Nessuna uscita AnimeUnity trovata per la tua lista.")]),
                     tray.button("↻ Aggiorna ora", {
                         intent: "primary",
                         onClick: "refresh-animeunity-schedule"
@@ -115,19 +139,21 @@ function init() {
             });
         });
 
-        await refreshSchedule(ctx, false);
+        await refreshSchedule(ctx, tray, false);
+        if (!$storage.get(TRAY_SEEN_KEY)) {
+            $storage.set(TRAY_SEEN_KEY, true);
+            // Open it once so the user immediately knows where the plugin is.
+            ctx.setTimeout(() => tray.open(), 700);
+        }
         // A short cache period avoids needless requests on navigation while
         // keeping the page current enough for same-day release changes.
-        ctx.setInterval(() => refreshSchedule(ctx, false), 30 * 60 * 1000);
+        ctx.setInterval(() => refreshSchedule(ctx, tray, false), 30 * 60 * 1000);
     });
 }
 
-async function refreshSchedule(ctx: any, showResult: boolean) {
+async function refreshSchedule(ctx: any, tray: any, showResult: boolean) {
     try {
-        const [calendarResponse, collection] = await Promise.all([
-            ctx.fetch(CALENDAR_URL),
-            $anilist.getAnimeCollection(true)
-        ]);
+        const calendarResponse = await ctx.fetch(CALENDAR_URL);
 
         if (!calendarResponse.ok) {
             throw new Error(`AnimeUnity returned HTTP ${calendarResponse.status}`);
@@ -136,6 +162,15 @@ async function refreshSchedule(ctx: any, showResult: boolean) {
         const calendar = calendarResponse.json();
         if (!calendar || typeof calendar !== "object") {
             throw new Error("AnimeUnity returned an invalid calendar.");
+        }
+
+        let collection: any = null;
+        try {
+            collection = await $anilist.getAnimeCollection(true);
+        } catch (_) {
+            // A local account or a just-started server may not have a fresh
+            // collection yet. SeaAnime's cached collection is still valid.
+            collection = await $anilist.getAnimeCollection(false);
         }
 
         const collectionByTitle = buildCollectionIndex(collection);
@@ -155,6 +190,10 @@ async function refreshSchedule(ctx: any, showResult: boolean) {
         });
         $store.set(UPDATED_KEY, updatedAt);
         $storage.set(UPDATED_KEY, updatedAt);
+        $store.set(ERROR_KEY, "");
+        $storage.set(ERROR_KEY, "");
+        tray.updateBadge({ number: items.length > 0 ? items.length : 1, intent: items.length > 0 ? "success" : "warning" });
+        tray.update();
         $app.invalidateClientQuery(["GetAnimeSchedule"]);
 
         if (showResult) {
@@ -162,8 +201,15 @@ async function refreshSchedule(ctx: any, showResult: boolean) {
         }
     } catch (error) {
         console.error("AnimeUnity Schedule refresh error:", error);
+        const message = error instanceof Error
+            ? error.message
+            : "Impossibile aggiornare il palinsesto.";
+        $store.set(ERROR_KEY, message);
+        $storage.set(ERROR_KEY, message);
+        tray.updateBadge({ number: 1, intent: "alert" });
+        tray.update();
         if (showResult) {
-            ctx.toast.error("AnimeUnity: impossibile aggiornare il palinsesto.");
+            ctx.toast.error(`AnimeUnity: ${message}`);
         }
     }
 }
