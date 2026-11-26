@@ -449,13 +449,16 @@ class Provider {
             const videos = episode.videos || [];
 
             for (const video of videos) {
-                if (
-                    !video ||
-                    video.is_hidden ||
-                    !video.id
-                ) {
+                if (!video || !video.id) {
                     continue;
                 }
+
+                // AnimeUnity currently marks the middle episodes of some
+                // complete batch releases as `is_hidden`, while still
+                // serving their public episode pages and VixCloud embeds.
+                // Do not discard those valid streams: Fool Night (12-episode
+                // batch) is one example where only episodes 1 and 12 are
+                // unhidden in the catalogue response.
 
                 // A search result is explicitly either dubbed or subtitled.
                 // Do not expose the other language as another episode with
